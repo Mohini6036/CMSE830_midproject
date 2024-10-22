@@ -4,28 +4,120 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import OneHotEncoder
 from scipy import stats
+import warnings
+import plotly.graph_objects as go
+from scipy.stats import gaussian_kde
+import os
 
-# Load data (you can load the same data used in the notebook)
-@st.cache_data
-def load_data():
-    data_init = pd.read_csv(r'D:/Foundations_of_DataScience/Projects/Mid_project\Dataset10/loan_data_2015.csv')  # Replace with your file path if necessary
-    return data_init
+warnings.filterwarnings("ignore")
 
-data_init = load_data()
+
+directory = 'D:\Foundations_of_DataScience\Projects\Mid_project\Dataset10\CMSE830_midproject' 
+dfs = []
+for i in range(9):
+    file_path = os.path.join(directory, f'chunk_{i}.csv')
+    df = pd.read_csv(file_path)
+    dfs.append(df)
+
+data_init = pd.concat(dfs, ignore_index=True)
+print(data_init.columns)
+# print(data_init.columns)
+
+
+# # Load data (you can load the same data used in the notebook)
+# @st.cache_data
+# def load_data():
+#     data_init = pd.read_csv(r'D:\Foundations_of_DataScience\Projects\Mid_project\Dataset10\CMSE830_midproject\loan_data_2015.csv')  # Replace with your file path if necessary
+#     return data_init
+
+# data_init = load_data()
+# data=data_init.copy()
 data=data_init[['id','loan_amnt', 'funded_amnt', 'revol_bal','total_rev_hi_lim',
            'int_rate','installment','total_pymnt','total_rec_late_fee','recoveries','last_pymnt_amnt','out_prncp','total_rec_prncp','total_rec_int',
            'delinq_2yrs','earliest_cr_line','inq_last_6mths','open_acc','total_acc','pub_rec',
-           'dti','dti_joint','annual_inc','verification_status',
+           'dti','annual_inc','verification_status',
            'revol_util',
            'emp_length','home_ownership',
            'pymnt_plan','grade','sub_grade','loan_status','purpose','acc_now_delinq','mths_since_last_delinq','addr_state']].copy()
 
+mask = (data['loan_status'] != 'Current') & (data['loan_status'] != 'Issued') & (data['loan_status'] != 'Late (16-30 days)') & (data['loan_status'] != 'In Grace Period')
+data = data[mask]
+data['risk'] = np.where((data['loan_status'] == 'Charged Off') | (data['loan_status'] == 'Late (31-120 days)') | (data['loan_status'] == 'Default'), 1, 0)
+data.drop('loan_status', axis=1, inplace=True)
+
+loan_amounts_balances = pd.DataFrame({
+    'Column Name': ['id', 'loan_amnt', 'funded_amnt', 'revol_bal', 'total_rev_hi_lim', 'out_prncp', 'total_rec_prncp'],
+    'Description': [
+        'Unique identifier for each loan.', 
+        'The total amount of money that the borrower requested.', 
+        'The actual amount of money funded by investors.', 
+        'Total credit revolving balance (amount owed on revolving accounts).',
+        'The total revolving high credit/credit limit.', 
+        'Remaining outstanding principal balance for total amount funded.',
+        'Principal amount received to date.'
+    ]
+})
+
+payment_behavior = pd.DataFrame({
+    'Column Name': ['installment', 'total_pymnt', 'total_rec_late_fee', 'recoveries', 'last_pymnt_amnt'],
+    'Description': [
+        'Monthly payment amount owed by the borrower.',
+        'Total payments (including principal, interest, late fees, etc.) received to date.',
+        'Total late fees received.',
+        'Post-charge off gross recovery amount.',
+        'Amount of the last payment made by the borrower.'
+    ]
+})
+
+credit_history = pd.DataFrame({
+    'Column Name': ['delinq_2yrs', 'earliest_cr_line', 'inq_last_6mths', 'open_acc', 'total_acc', 'pub_rec', 'acc_now_delinq', 'mths_since_last_delinq'],
+    'Description': [
+        'The number of 30+ days past-due incidences of delinquency in the borrower’s credit file in the last 2 years.',
+        'The date the borrower’s earliest reported credit line was opened.',
+        'Number of credit inquiries in the last 6 months.',
+        'The number of open credit lines in the borrower’s credit file.',
+        'The total number of credit lines currently in the borrower’s credit file.',
+        'Number of derogatory public records (e.g., bankruptcies, tax liens).',
+        'The number of accounts currently delinquent.',
+        'Months since the borrower’s last delinquency.'
+    ]
+})
+
+dti_income = pd.DataFrame({
+    'Column Name': ['dti', 'dti_joint', 'annual_inc', 'verification_status'],
+    'Description': [
+        'Debt-to-income ratio of the borrower.',
+        'Debt-to-income ratio for joint applications.',
+        'The self-reported annual income provided by the borrower during loan application.',
+        'Indicates whether the income was verified.'
+    ]
+})
+
+credit_utilization = pd.DataFrame({
+    'Column Name': ['revol_util', 'mths_since_rcnt_il'],
+    'Description': [
+        'Revolving line utilization rate, or the amount of credit used relative to the credit limit.',
+        'Months since most recent installment loan.'
+    ]
+})
+
+personal_info = pd.DataFrame({
+    'Column Name': ['emp_length', 'home_ownership', 'addr_state', 'application_type', 'emp_title', 'title'],
+    'Description': [
+        'Number of years the borrower has been employed.',
+        'The borrower’s home ownership status (e.g., Rent, Own, Mortgage).',
+        'The state provided by the borrower in the loan application.',
+        'Indicates whether the loan application is individual or joint.',
+        'Job title provided by the borrower.',
+        'Loan title provided by the borrower.'
+    ]
+})
+
 # Main Title
 st.title("Credit risk analysis Dashboard")
-
-# Create a tab for "My Analysis"
-my_analysis = st.sidebar.radio("Select Section", ["My Analysis", "Column Descriptions", "Exploratory Data Analysis (EDA)"])
+my_analysis = st.sidebar.radio("Select Section", ["My Analysis", "Initial Data Analysis (IDA)", "Exploratory Data Analysis (EDA)"])
 
 # My Analysis Section
 if my_analysis == "My Analysis":
@@ -51,46 +143,146 @@ if my_analysis == "My Analysis":
     which will help the bank reduce its overall risk and increase its profitability.
     
     """)
+        st.subheader("Columns Description")
+    
+        # Loan Amounts and Balances
+        st.markdown("### Loan Amounts and Balances")
+        st.table(loan_amounts_balances)
+
+        # Payment Behavior
+        st.markdown("### Payment Behavior")
+        st.table(payment_behavior)
+
+        # Credit History
+        st.markdown("### Credit History")
+        st.table(credit_history)
+
+        # Debt-to-Income (DTI) and Income
+        st.markdown("### Debt-to-Income (DTI) and Income")
+        st.table(dti_income)
+
+        # Credit Utilization
+        st.markdown("### Credit Utilization")
+        st.table(credit_utilization)
+
+        # Personal Information
+        st.markdown("### Personal Information")
+        st.table(personal_info)
+
 
     # Initial Data Analysis (IDA)
     with tab2:
         st.header("Initial Data Analysis (IDA)")
         st.write("This section provides a preliminary overview of the dataset's characteristics through descriptive statistics.")
         
-        # Display summary statistics
+        
+        # Displays summary statistics
         st.write("### Summary Statistics")
+        st.write("Displays the distribution and spread of numerical features in the dataset.")
         st.write(data.describe().T)
+        st.write("""**Inference**: The summary statistics provide an overview of central tendencies (mean, median) and 
+                 variability (std dev), helping to spot potential outliers or skewed distributions.""")
         
         # Summary of missing values
-        st.write("### Missing Values")
-        st.write(data.isnull().sum())
+        missing_cols = data.isnull().sum()[data.isnull().sum() > 0]
+        st.write("### Missing Values (Only Columns with Missing Data)")
+        st.write(missing_cols)
         
         # Visualizations for missing data
-        st.write(" Missing Data Visualization")
-        fig, ax = plt.subplots()
-        sns.heatmap(data.isnull(), cbar=False, ax=ax)
-        plt.title('Missing Data Heatmap')
-        st.pyplot(fig)
+        missing_cols = data.columns[data.isnull().sum() > 0]
+        if not missing_cols.empty:
+            st.write("### Missing Data Visualization")
+            st.write("Shows which features have missing data and their density.")
+            fig, ax = plt.subplots()
+            sns.heatmap(data[missing_cols].isnull(), cbar=False, ax=ax)
+            plt.title('Missing Data Heatmap (Only Columns with Missing Data)')
+            st.pyplot(fig)
+        else:
+            st.write("No missing data found.")
+        # st.write("""**Inference**: Features with large amounts of missing data might require more careful imputation, removal, 
+        #          or flagging for risk in further analyses.""")
+
+
+        # categorical_columns = data.select_dtypes(include=['object']).columns
+        # encoder = OneHotEncoder(sparse=False, drop='first')
+        # encoded_data = pd.DataFrame(encoder.fit_transform(data[categorical_columns]), columns=encoder.get_feature_names_out(categorical_columns))
+
+        # Combine numeric and encoded categorical columns
+        # data_combined = pd.concat([data_numeric_imputed, encoded_data], axis=1)
+
+        st.write("### Histograms and Interactive plot")
+        numerical_columns = data.select_dtypes(include=[np.number]).columns
+        def plot_histogram_with_kde(column_name):
+            data[column_name] = pd.to_numeric(data[column_name], errors='coerce')
+            column_data = data[column_name].dropna()
+            histogram = go.Histogram(
+                x=column_data,
+                nbinsx=30,
+                name=f'{column_name} Distribution',
+                opacity=0.75,
+                marker=dict(color='blue'),
+            )
+            kde = gaussian_kde(column_data)
+            x_kde = np.linspace(column_data.min(), column_data.max(), 100)
+            y_kde = kde(x_kde)
+            smoothing_curve = go.Scatter(
+                x=x_kde,
+                y=y_kde * (len(column_data) * (x_kde[1] - x_kde[0])),  # Adjust KDE to match histogram
+                mode='lines',
+                name=f'Smoothing Curve (KDE) for {column_name}',
+                line=dict(color='orange', width=2)
+            )
+            fig = go.Figure(data=[histogram, smoothing_curve])
+            fig.update_layout(
+                title=f'Distribution of {column_name} with Smoothing Curve',
+                xaxis_title=column_name,
+                yaxis_title='Count',
+                template='plotly_white'
+            )
+
+            # Display the plot in Streamlit
+            st.plotly_chart(fig)
+
+        # Streamlit layout
+        st.title("Numerical Feature Distribution with KDE")
+        for column in data.columns:
+            try:
+                data[column] = pd.to_datetime(data[column], errors='coerce')
+            except:
+                continue
+        # Loop through each numerical column and plot
+        for column in numerical_columns:
+            if column!='id':
+                st.subheader(f"Column: {column}")
+                plot_histogram_with_kde(column)
+
         
-        # Histograms for numerical columns
-        st.write("### Histograms")
-        for col in data.select_dtypes(include=['number']).columns:
-            plt.figure(figsize=(10, 4))
-            sns.histplot(data[col], kde=True)
-            plt.title(f'Distribution of {col}')
-            st.pyplot()
 
     # Exploratory Data Analysis (EDA)
     with tab3:
         st.header("Exploratory Data Analysis (EDA)")
         st.write("This section delves deeper into the relationships among variables.")
-        
+
         # Bivariate Analysis
         st.write("### Bivariate Analysis")
+        
+        # Dropping the 'id' column if present
+        if 'id' in data.columns:
+            data = data.drop(columns=['id'])
+        
+        # Calculating the correlation matrix
         correlation = data.corr()
-        sns.heatmap(correlation, annot=True, cmap='coolwarm')
-        plt.title('Correlation Heatmap')
-        st.pyplot()
+
+        # Filtering correlation values where the absolute value is greater than 0.5
+        filtered_corr = correlation[(correlation.abs() > 0.5) & (correlation != 1.0)].dropna(how='all', axis=0).dropna(how='all', axis=1)
+
+        # Plotting the heatmap
+        if not filtered_corr.empty:
+            sns.heatmap(filtered_corr, annot=True, cmap='coolwarm', vmin=-1, vmax=1)
+            plt.title('Filtered Correlation Heatmap (|correlation| > 0.5)')
+            st.pyplot()
+        else:
+            st.write("No correlations found with an absolute value greater than 0.5.")
         
         # Scatter plots for selected pairs
         st.write("### Scatter Plots")
@@ -148,7 +340,7 @@ if my_analysis == "My Analysis":
                  based on the insights gained, we aim to create a robust predictive tool that mitigates risk and improves lending outcomes.""")
 
 # Column Descriptions Tab
-if my_analysis == "Column Descriptions":
+if my_analysis == "Initial Data Analysis (IDA)":
     st.sidebar.title('Column Descriptions')
     st.sidebar.write('Select a column to view its details:')
     selected_column = st.sidebar.selectbox('Select Column', data.columns)
